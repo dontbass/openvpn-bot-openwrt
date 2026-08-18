@@ -17,22 +17,19 @@ Telegram бот для управления клиентами OpenVPN на ро
 - Установленные пакеты: `openvpn-openssl`, `openvpn-easy-rsa`, `curl`
 - Инициализированная PKI (`/etc/openvpn/pki/ca.crt`, `ta.key`)
 
-## Установка
+## Быстрый старт
 
 ```sh
-# 1. Клонируй репо на роутер
 cd /tmp
-curl -L https://github.com/YOUR_USERNAME/openvpn-bot-openwrt/archive/refs/heads/main.tar.gz | tar xz
+curl -L https://github.com/dontbass/openvpn-bot-openwrt/archive/refs/heads/main.tar.gz | tar xz
 cd openvpn-bot-openwrt-main
-
-# 2. Запусти установщик
 sh install.sh
 ```
 
 Установщик спросит:
 - **Bot Token** — токен от @BotFather
-- **Admin ID(s)** — Telegram ID администраторов (через пробел, если несколько)
-- **Внешний IP/хост** — публичный адрес роутера (определяется автоматически)
+- **Admin ID(s)** — Telegram ID администраторов (через пробел, если несколько). Узнать свой ID: @userinfobot
+- **Внешний IP/хост** — определяется автоматически, можно изменить
 - **Порт и протокол** — считываются из `server.conf` автоматически
 
 ## Команды бота
