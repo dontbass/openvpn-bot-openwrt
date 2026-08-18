@@ -1,23 +1,32 @@
-# openvpn-bot-openwrt
+# 🔐 OpenVPN Bot for OpenWrt
 
-Telegram бот для управления клиентами OpenVPN на роутере под OpenWrt / FriendlyWrt.
+> Telegram-бот для управления клиентами OpenVPN прямо с телефона — без терминала и SSH.
 
-Написан на чистом `sh` + `curl` — без Python, Node.js, дополнительных пакетов.
+[![OpenWrt](https://img.shields.io/badge/OpenWrt-23.x%20%2F%20FriendlyWrt%2024-00b5e2?style=flat-square&logo=openwrt)](https://openwrt.org)
+[![Shell](https://img.shields.io/badge/Shell-ash%20%2F%20sh-89e051?style=flat-square&logo=gnu-bash)](https://wiki.openwrt.org/doc/techref/ash)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot%20API-v7-2CA5E0?style=flat-square&logo=telegram)](https://core.telegram.org/bots/api)
 
-## Возможности
+---
 
-- `/newclient` — интерактивное создание клиента, получение `.ovpn` файлом прямо в чат
-- `/listclients` — список активных клиентов
-- `/revoke` — отзыв клиента через inline-кнопки
-- Авторизация по Telegram ID (один или несколько администраторов)
+## ✨ Возможности
 
-## Требования
+| Функция | Описание |
+|---|---|
+| `/newclient` | Интерактивное создание клиента + отправка `.ovpn` файлом в чат |
+| `/listclients` | Список всех активных клиентов |
+| `/revoke` | Отзыв сертификата через inline-кнопки |
+| 📎 Инструкция | После конфига автоматически отправляются ссылки на клиенты для всех платформ |
+| 🔒 Авторизация | Доступ только по Telegram ID (один или несколько администраторов) |
 
-- OpenWrt 23.x / FriendlyWrt 24
-- Установленные пакеты: `openvpn-openssl`, `openvpn-easy-rsa`, `curl`
-- Инициализированная PKI (`/etc/openvpn/pki/ca.crt`, `ta.key`)
+## 📋 Требования
 
-## Быстрый старт
+- **OpenWrt 23.x** или **FriendlyWrt 24** (тестировалось на NanoPi R5S)
+- Пакеты: `openvpn-openssl`, `openvpn-easy-rsa`, `curl`
+- Инициализированная PKI (`/etc/openvpn/pki/`)
+- Поднятый OpenVPN сервер
+
+## ⚡ Быстрый старт
 
 ```sh
 cd /tmp
@@ -26,49 +35,104 @@ cd openvpn-bot-openwrt-main
 sh install.sh
 ```
 
-Установщик спросит:
-- **Bot Token** — токен от @BotFather
-- **Admin ID(s)** — Telegram ID администраторов (через пробел, если несколько). Узнать свой ID: @userinfobot
-- **Внешний IP/хост** — определяется автоматически, можно изменить
-- **Порт и протокол** — считываются из `server.conf` автоматически
+Установщик сам определит внешний IP, порт и протокол из `server.conf` и спросит только необходимое:
 
-## Команды бота
+```
+========================================
+  OpenVPN Telegram Bot — Установка
+========================================
 
-| Команда | Описание |
-|---|---|
-| `/start` | Главное меню |
-| `/newclient` | Создать нового клиента (интерактивно) |
-| `/listclients` | Список активных клиентов |
-| `/revoke` | Отозвать клиента (inline-кнопки) |
-| `/cancel` | Отменить текущее действие |
+[?] Telegram Bot Token: <токен от @BotFather>
+[+] Бот найден: @your_bot_name
 
-## Управление сервисом
+[?] Admin ID(s): 123456789
+    (узнать свой ID: @userinfobot)
+
+[?] Внешний IP/хост сервера [1.2.3.4]:
+[?] Порт OpenVPN [1194]:
+[?] Протокол (tcp/udp) [tcp]:
+
+[+] Установка завершена!
+```
+
+## 💬 Команды бота
+
+```
+/start        — главное меню
+/newclient    — создать нового клиента (интерактивно)
+/listclients  — список активных клиентов
+/revoke       — отозвать клиента (inline-кнопки)
+/cancel       — отменить текущее действие
+```
+
+### Как выглядит создание клиента
+
+```
+Вы: /newclient
+Бот: Введите имя нового клиента (латиница, цифры, дефис):
+Вы: myphoneq
+Бот: ⏳ Генерирую сертификат для myphoneq...
+Бот: 📎 myphoneq.ovpn  [файл]
+Бот: 📱 Как подключиться:
+     • Android — OpenVPN for Android
+     • iOS — OpenVPN Connect
+     • Windows — OpenVPN Connect
+     • macOS — Tunnelblick
+     • Linux — sudo apt install openvpn
+```
+
+## 🛠 Управление
 
 ```sh
+# Статус
 /etc/init.d/ovpnbot status
+
+# Перезапуск
 /etc/init.d/ovpnbot restart
-/etc/init.d/ovpnbot stop
 
 # Логи
 tail -f /var/log/ovpnbot.log
+
+# Обновление бота
+curl -L https://raw.githubusercontent.com/dontbass/openvpn-bot-openwrt/main/bot.sh \
+  -o /usr/share/ovpnbot/bot.sh && /etc/init.d/ovpnbot restart
 ```
 
-## Конфиг
+## ⚙️ Конфигурация
 
-Хранится в UCI `/etc/config/ovpnbot`. Изменить вручную:
+Конфиг хранится в `/etc/ovpnbot.conf`:
 
 ```sh
-uci set ovpnbot.main.admin_ids="123456789 987654321"
-uci commit ovpnbot
+TOKEN="your_bot_token"
+ADMIN_IDS="123456789 987654321"  # несколько ID через пробел
+HOST="1.2.3.4"
+PORT="1194"
+PROTO="tcp"
+```
+
+Изменить и применить:
+
+```sh
+vi /etc/ovpnbot.conf
 /etc/init.d/ovpnbot restart
 ```
 
-## Удаление
+## 🗑 Удаление
 
 ```sh
 /etc/init.d/ovpnbot stop
 /etc/init.d/ovpnbot disable
-rm -rf /usr/share/ovpnbot /etc/init.d/ovpnbot
-uci delete ovpnbot
-uci commit ovpnbot
+rm -rf /usr/share/ovpnbot /etc/init.d/ovpnbot /etc/ovpnbot.conf
 ```
+
+## 🏗 Как это работает
+
+```
+Telegram → Bot API (polling) → bot.sh → easyrsa → .ovpn файл → Bot API → вам в чат
+```
+
+Бот написан на чистом **POSIX sh + curl** — никаких зависимостей, работает на минимальной прошивке OpenWrt. Использует `procd` для автозапуска и автоматического перезапуска при падении.
+
+## 📜 Лицензия
+
+MIT — используйте свободно.
