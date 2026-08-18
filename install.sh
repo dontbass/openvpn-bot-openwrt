@@ -4,17 +4,16 @@
 INSTALL_DIR="/usr/share/ovpnbot"
 INIT_SCRIPT="/etc/init.d/ovpnbot"
 CLIENTS_DIR="/etc/openvpn/clients"
-LOG="/var/log/ovpnbot.log"
+CONFIG_FILE="/etc/ovpnbot.conf"
 
 info()   { echo "[+] $*"; }
-warn()   { echo "[!] $*"; }
 error()  { echo "[x] $*"; exit 1; }
 prompt() { printf "[?] %s " "$*"; }
 
 # ─── Проверки ─────────────────────────────────────────────────────────────────
 
 info "Проверка зависимостей..."
-for cmd in curl openssl easyrsa uci; do
+for cmd in curl openssl easyrsa; do
     command -v "$cmd" > /dev/null 2>&1 || error "Не найдена команда: $cmd"
 done
 
@@ -25,9 +24,9 @@ done
 # ─── Сбор параметров ──────────────────────────────────────────────────────────
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "========================================"
 echo "  OpenVPN Telegram Bot — Установка"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "========================================"
 echo ""
 
 # Токен
@@ -50,7 +49,7 @@ read -r ADMIN_IDS
 [ -z "$ADMIN_IDS" ] && error "Нужен хотя бы один admin ID."
 echo ""
 
-# Внешний IP — автоопределение
+# Внешний IP
 DETECTED_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "")
 if [ -n "$DETECTED_IP" ]; then
     prompt "Внешний IP/хост сервера [$DETECTED_IP]:"
@@ -62,7 +61,7 @@ else
 fi
 [ -z "$SERVER_HOST" ] && error "Хост не может быть пустым."
 
-# Порт и протокол — читаем из server.conf автоматически
+# Порт и протокол из server.conf
 DETECTED_PORT=$(grep '^port ' /etc/openvpn/server.conf | awk '{print $2}')
 DETECTED_PROTO=$(grep '^proto ' /etc/openvpn/server.conf | awk '{print $2}')
 DETECTED_PORT="${DETECTED_PORT:-1194}"
@@ -85,20 +84,17 @@ mkdir -p "$INSTALL_DIR" "$CLIENTS_DIR"
 cp "$(dirname "$0")/bot.sh" "$INSTALL_DIR/bot.sh"
 chmod +x "$INSTALL_DIR/bot.sh"
 
-# ─── UCI конфиг ───────────────────────────────────────────────────────────────
+# ─── Конфиг (простой файл вместо UCI) ────────────────────────────────────────
 
 info "Записываем конфиг..."
-
-# Удаляем старый конфиг если есть — игнорируем ошибку
-uci -q delete ovpnbot.main 2>/dev/null
-
-uci set ovpnbot.main=ovpnbot
-uci set ovpnbot.main.token="$BOT_TOKEN"
-uci set ovpnbot.main.admin_ids="$ADMIN_IDS"
-uci set ovpnbot.main.host="$SERVER_HOST"
-uci set ovpnbot.main.port="$SERVER_PORT"
-uci set ovpnbot.main.proto="$SERVER_PROTO"
-uci commit ovpnbot || error "Не удалось записать UCI конфиг."
+cat > "$CONFIG_FILE" << CONF
+TOKEN="$BOT_TOKEN"
+ADMIN_IDS="$ADMIN_IDS"
+HOST="$SERVER_HOST"
+PORT="$SERVER_PORT"
+PROTO="$SERVER_PROTO"
+CONF
+chmod 600 "$CONFIG_FILE"
 
 # ─── CRL ──────────────────────────────────────────────────────────────────────
 
@@ -136,13 +132,14 @@ info "Включаем автозапуск и запускаем бота..."
 "$INIT_SCRIPT" start
 
 echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "========================================"
 info "Установка завершена!"
 echo ""
 echo "  Бот: @$BOTNAME"
-echo "  Логи: tail -f $LOG"
+echo "  Конфиг: $CONFIG_FILE"
+echo "  Логи: tail -f /var/log/ovpnbot.log"
 echo "  Статус: /etc/init.d/ovpnbot status"
 echo "  Перезапуск: /etc/init.d/ovpnbot restart"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "========================================"
 echo ""
-info "Напиши /start своему боту в Telegram."
+info "Напиши /start боту @$BOTNAME в Telegram."
