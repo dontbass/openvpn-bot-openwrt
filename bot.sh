@@ -107,6 +107,7 @@ cmd_start() {
     tg_send "$1" "👋 *OpenVPN Manager*
 
 /newclient — создать клиента
+/getclient — получить конфиг повторно
 /listclients — список клиентов
 /revoke — отозвать клиента"
 }
@@ -126,6 +127,22 @@ cmd_list_clients() {
         for c in $clients; do msg="${msg}• $c"$'\n'; done
         tg_send "$1" "$msg"
     fi
+}
+
+cmd_get_client() {
+    local chat_id=$1
+    local clients buttons c kb
+    clients=$(list_clients)
+    if [ -z "$clients" ]; then
+        tg_send "$chat_id" "Нет активных клиентов."; return
+    fi
+    buttons=""
+    for c in $clients; do
+        [ -n "$buttons" ] && buttons="$buttons,"
+        buttons="${buttons}[{\"text\":\"📄 $c\",\"callback_data\":\"getclient:$c\"}]"
+    done
+    kb="{\"inline_keyboard\":[$buttons]}"
+    tg_send_keyboard "$chat_id" "Выберите клиента для получения конфига:" "$kb"
 }
 
 cmd_revoke_start() {
@@ -179,6 +196,33 @@ handle_name() {
     log "INFO created $name"
 }
 
+handle_send_config() {
+    local chat_id=$1 name=$2 ovpn
+    # Если .ovpn файл уже есть — шлём сразу, иначе перестраиваем
+    if [ ! -f "$CLIENTS_DIR/$name.ovpn" ]; then
+        if ! client_exists "$name"; then
+            tg_send "$chat_id" "❌ Клиент *$name* не найден."; return
+        fi
+        ovpn=$(build_ovpn "$name")
+    else
+        ovpn="$CLIENTS_DIR/$name.ovpn"
+    fi
+    tg_send_doc "$chat_id" "$ovpn" "📄 $name.ovpn"
+    tg_send "$chat_id" "📱 *Как подключиться:*
+
+1️⃣ Установите OpenVPN клиент:
+• *Android* — [OpenVPN for Android](https://play.google.com/store/apps/details?id=de.blinkt.openvpn)
+• *iOS* — [OpenVPN Connect](https://apps.apple.com/app/openvpn-connect/id590379981)
+• *Windows* — [OpenVPN Connect](https://openvpn.net/client/client-connect-vpn-for-windows/)
+• *macOS* — [Tunnelblick](https://tunnelblick.net/downloads.html)
+• *Linux* — \`sudo apt install openvpn\`
+
+2️⃣ Откройте приложение → импортируйте файл \`$name.ovpn\`
+
+3️⃣ Нажмите *Подключить*"
+    log "INFO resent config $name"
+}
+
 handle_revoke() {
     local chat_id=$1 name=$2 res ret
     tg_send "$chat_id" "⏳ Отзываю *$name*..."
@@ -214,6 +258,7 @@ process_message() {
     case "$text" in
         /start|/help)  cmd_start "$chat_id" ;;
         /newclient)    cmd_new_client "$chat_id" ;;
+        /getclient)    cmd_get_client "$chat_id" ;;
         /listclients)  cmd_list_clients "$chat_id" ;;
         /revoke)       cmd_revoke_start "$chat_id" ;;
         /cancel)       tg_send "$chat_id" "Нечего отменять." ;;
@@ -226,7 +271,8 @@ process_callback() {
     tg_answer_cb "$cb_id"
     is_admin "$from_id" || return
     case "$data" in
-        revoke:*) handle_revoke "$chat_id" "${data#revoke:}" ;;
+        revoke:*)    handle_revoke "$chat_id" "${data#revoke:}" ;;
+        getclient:*) handle_send_config "$chat_id" "${data#getclient:}" ;;
     esac
 }
 
