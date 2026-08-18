@@ -1,8 +1,7 @@
 #!/bin/sh
 # openvpn-bot — Telegram bot for OpenVPN client management on OpenWrt
-# https://github.com/your-username/openvpn-bot-openwrt
 
-CONFIG="/etc/config/ovpnbot"
+CONFIG_FILE="/etc/ovpnbot.conf"
 CLIENTS_DIR="/etc/openvpn/clients"
 PKI_DIR="/etc/openvpn/pki"
 STATE_DIR="/tmp/ovpnbot_state"
@@ -11,25 +10,16 @@ LOG="/var/log/ovpnbot.log"
 
 mkdir -p "$STATE_DIR" "$CLIENTS_DIR"
 
-# ─── Config helpers ───────────────────────────────────────────────────────────
+# ─── Загрузка конфига ─────────────────────────────────────────────────────────
 
-get_cfg() {
-    uci get ovpnbot.main.$1 2>/dev/null
-}
-
-TOKEN=$(get_cfg token)
-ADMIN_IDS=$(get_cfg admin_ids)  # пробел-разделённый список
-OPENVPN_HOST=$(get_cfg host)
-OPENVPN_PORT=$(get_cfg port)
-OPENVPN_PROTO=$(get_cfg proto)
+[ -f "$CONFIG_FILE" ] || { echo "Config not found: $CONFIG_FILE"; exit 1; }
+. "$CONFIG_FILE"
 
 API="https://api.telegram.org/bot$TOKEN"
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
-log() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"
-}
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
@@ -75,26 +65,19 @@ tg_send_keyboard() {
 
 tg_get_updates() {
     local offset=$1
-    curl -s "$API/getUpdates?offset=$offset&timeout=30&allowed_updates=message"
+    curl -s "$API/getUpdates?offset=$offset&timeout=30"
+}
+
+tg_answer_callback() {
+    local id=$1
+    curl -s -X POST "$API/answerCallbackQuery" -d "callback_query_id=$id" > /dev/null
 }
 
 # ─── State machine ────────────────────────────────────────────────────────────
 
-get_state() {
-    local chat_id=$1
-    cat "$STATE_DIR/$chat_id" 2>/dev/null || echo "idle"
-}
-
-set_state() {
-    local chat_id=$1
-    local state=$2
-    echo "$state" > "$STATE_DIR/$chat_id"
-}
-
-clear_state() {
-    local chat_id=$1
-    rm -f "$STATE_DIR/$chat_id"
-}
+get_state() { cat "$STATE_DIR/$1" 2>/dev/null || echo "idle"; }
+set_state()  { echo "$2" > "$STATE_DIR/$1"; }
+clear_state(){ rm -f "$STATE_DIR/$1"; }
 
 # ─── OpenVPN helpers ──────────────────────────────────────────────────────────
 
@@ -102,25 +85,21 @@ list_clients() {
     ls "$PKI_DIR/issued/" 2>/dev/null | grep -v '^server\.crt$' | sed 's/\.crt$//'
 }
 
-client_exists() {
-    [ -f "$PKI_DIR/issued/$1.crt" ]
-}
+client_exists() { [ -f "$PKI_DIR/issued/$1.crt" ]; }
 
 generate_client() {
-    local name=$1
     cd /etc/openvpn || return 1
-    easyrsa --batch build-client-full "$name" nopass 2>&1
+    easyrsa --batch build-client-full "$1" nopass 2>&1
 }
 
 build_ovpn() {
     local name=$1
     local out="$CLIENTS_DIR/$name.ovpn"
-
     cat > "$out" << OVPN
 client
 dev tun
-proto $OPENVPN_PROTO
-remote $OPENVPN_HOST $OPENVPN_PORT
+proto $PROTO
+remote $HOST $PORT
 resolv-retry infinite
 nobind
 persist-key
@@ -146,45 +125,36 @@ OVPN
 }
 
 revoke_client() {
-    local name=$1
     cd /etc/openvpn || return 1
-    easyrsa --batch revoke "$name" 2>&1
+    easyrsa --batch revoke "$1" 2>&1
     easyrsa --batch gen-crl 2>&1
-    cp "$PKI_DIR/crl.pem" "$PKI_DIR/crl.pem"
-    rm -f "$CLIENTS_DIR/$name.ovpn"
+    rm -f "$CLIENTS_DIR/$1.ovpn"
 }
 
-# ─── Command handlers ─────────────────────────────────────────────────────────
+# ─── Handlers ─────────────────────────────────────────────────────────────────
 
 cmd_start() {
-    local chat_id=$1
-    tg_send "$chat_id" "👋 *OpenVPN Manager*
+    tg_send "$1" "👋 *OpenVPN Manager*
 
-Доступные команды:
-/newclient — создать нового клиента
+/newclient — создать клиента
 /listclients — список клиентов
-/revoke — отозвать клиента
-/help — помощь"
+/revoke — отозвать клиента"
 }
 
 cmd_new_client() {
-    local chat_id=$1
-    set_state "$chat_id" "await_client_name"
-    tg_send "$chat_id" "Введите имя нового клиента (латиница, цифры, дефис):"
+    set_state "$1" "await_client_name"
+    tg_send "$1" "Введите имя нового клиента (латиница, цифры, дефис):"
 }
 
 cmd_list_clients() {
-    local chat_id=$1
     local clients
     clients=$(list_clients)
     if [ -z "$clients" ]; then
-        tg_send "$chat_id" "Нет активных клиентов."
+        tg_send "$1" "Нет активных клиентов."
     else
         local msg="*Активные клиенты:*"$'\n'
-        for c in $clients; do
-            msg="$msg• $c"$'\n'
-        done
-        tg_send "$chat_id" "$msg"
+        for c in $clients; do msg="$msg• $c"$'\n'; done
+        tg_send "$1" "$msg"
     fi
 }
 
@@ -196,30 +166,23 @@ cmd_revoke_start() {
         tg_send "$chat_id" "Нет клиентов для отзыва."
         return
     fi
-
-    # Строим inline keyboard
     local buttons=""
     for c in $clients; do
-        if [ -n "$buttons" ]; then
-            buttons="$buttons,"
-        fi
-        buttons="$buttons[{\"text\":\"$c\",\"callback_data\":\"revoke:$c\"}]"
+        [ -n "$buttons" ] && buttons="$buttons,"
+        buttons="$buttons[{\"text\":\"❌ $c\",\"callback_data\":\"revoke:$c\"}]"
     done
-    local keyboard="{\"inline_keyboard\":[$buttons]}"
-
-    tg_send_keyboard "$chat_id" "Выберите клиента для отзыва:" "$keyboard"
+    tg_send_keyboard "$chat_id" "Выберите клиента для отзыва:" \
+        "{\"inline_keyboard\":[$buttons]}"
 }
 
 handle_await_name() {
     local chat_id=$1
     local name=$2
 
-    # Валидация имени
     if ! echo "$name" | grep -qE '^[a-zA-Z0-9_-]{1,32}$'; then
-        tg_send "$chat_id" "❌ Недопустимое имя. Только латиница, цифры, _ и -. Попробуйте ещё раз:"
+        tg_send "$chat_id" "❌ Только латиница, цифры, _ и -. Попробуйте ещё раз:"
         return
     fi
-
     if client_exists "$name"; then
         tg_send "$chat_id" "❌ Клиент *$name* уже существует. Введите другое имя:"
         return
@@ -231,129 +194,105 @@ handle_await_name() {
     local result
     result=$(generate_client "$name")
     if [ $? -ne 0 ]; then
-        log "ERROR generate_client $name: $result"
-        tg_send "$chat_id" "❌ Ошибка генерации сертификата. Смотри лог: $LOG"
+        log "ERROR generate $name: $result"
+        tg_send "$chat_id" "❌ Ошибка генерации. Смотри лог: $LOG"
         return
     fi
 
     local ovpn
     ovpn=$(build_ovpn "$name")
-    tg_send_doc "$chat_id" "$ovpn" "✅ Конфиг клиента *$name*"
+    tg_send_doc "$chat_id" "$ovpn" "✅ Конфиг клиента: $name"
     log "INFO created client $name"
 }
 
-handle_revoke_confirm() {
+handle_revoke() {
     local chat_id=$1
     local name=$2
-
-    tg_send "$chat_id" "⏳ Отзываю сертификат *$name*..."
+    tg_send "$chat_id" "⏳ Отзываю *$name*..."
     local result
     result=$(revoke_client "$name")
     if [ $? -ne 0 ]; then
         log "ERROR revoke $name: $result"
-        tg_send "$chat_id" "❌ Ошибка отзыва. Смотри лог: $LOG"
+        tg_send "$chat_id" "❌ Ошибка отзыва."
         return
     fi
     tg_send "$chat_id" "✅ Клиент *$name* отозван."
     log "INFO revoked client $name"
 }
 
-# ─── Update processing ────────────────────────────────────────────────────────
+# ─── Обработка сообщений ──────────────────────────────────────────────────────
 
 process_message() {
-    local chat_id=$1
-    local from_id=$2
-    local text=$3
+    local chat_id=$1 from_id=$2 text=$3
 
     if ! is_admin "$from_id"; then
         tg_send "$chat_id" "⛔ Нет доступа."
-        log "WARN unauthorized access from $from_id"
+        log "WARN unauthorized from $from_id"
         return
     fi
 
     local state
     state=$(get_state "$chat_id")
 
-    # Состояние — ожидаем имя клиента
     if [ "$state" = "await_client_name" ]; then
-        # Отмена по команде
         if [ "$text" = "/cancel" ]; then
             clear_state "$chat_id"
             tg_send "$chat_id" "Отменено."
-            return
+        else
+            handle_await_name "$chat_id" "$text"
         fi
-        handle_await_name "$chat_id" "$text"
         return
     fi
 
-    # Команды
     case "$text" in
-        /start)       cmd_start "$chat_id" ;;
-        /help)        cmd_start "$chat_id" ;;
-        /newclient)   cmd_new_client "$chat_id" ;;
-        /listclients) cmd_list_clients "$chat_id" ;;
-        /revoke)      cmd_revoke_start "$chat_id" ;;
-        /cancel)      tg_send "$chat_id" "Нечего отменять." ;;
-        *)            tg_send "$chat_id" "Неизвестная команда. /help" ;;
+        /start|/help)   cmd_start "$chat_id" ;;
+        /newclient)     cmd_new_client "$chat_id" ;;
+        /listclients)   cmd_list_clients "$chat_id" ;;
+        /revoke)        cmd_revoke_start "$chat_id" ;;
+        /cancel)        tg_send "$chat_id" "Нечего отменять." ;;
+        *)              tg_send "$chat_id" "Неизвестная команда. /help" ;;
     esac
 }
 
 process_callback() {
-    local chat_id=$1
-    local from_id=$2
-    local data=$3
-    local callback_id=$4
-
-    # Подтверждаем callback
-    curl -s -X POST "$API/answerCallbackQuery" -d "callback_query_id=$callback_id" > /dev/null
-
-    if ! is_admin "$from_id"; then
-        return
-    fi
-
+    local chat_id=$1 from_id=$2 data=$3 cb_id=$4
+    tg_answer_callback "$cb_id"
+    is_admin "$from_id" || return
     case "$data" in
-        revoke:*)
-            local name="${data#revoke:}"
-            handle_revoke_confirm "$chat_id" "$name"
-            ;;
+        revoke:*) handle_revoke "$chat_id" "${data#revoke:}" ;;
     esac
 }
 
 # ─── Main loop ────────────────────────────────────────────────────────────────
 
-log "INFO bot started"
+log "INFO bot started (host=$HOST port=$PORT proto=$PROTO)"
 
 OFFSET=0
 [ -f "$OFFSET_FILE" ] && OFFSET=$(cat "$OFFSET_FILE")
 
 while true; do
-    RESPONSE=$(tg_get_updates "$OFFSET")
+    RESP=$(tg_get_updates "$OFFSET")
 
-    # Парсим update_id, тип, данные через grep/sed (без jq)
-    echo "$RESPONSE" | grep -o '"update_id":[0-9]*' | while read -r upd; do
-        UPDATE_ID=$(echo "$upd" | grep -o '[0-9]*')
-        NEXT_OFFSET=$((UPDATE_ID + 1))
-        echo "$NEXT_OFFSET" > "$OFFSET_FILE"
-        OFFSET=$NEXT_OFFSET
+    # Парсим каждый update по update_id
+    echo "$RESP" | grep -o '"update_id":[0-9]*' | grep -o '[0-9]*' | while read -r UID; do
+        NEXT=$((UID + 1))
+        echo "$NEXT" > "$OFFSET_FILE"
 
-        # Определяем тип апдейта
-        BLOCK=$(echo "$RESPONSE" | grep -o "\"update_id\":$UPDATE_ID[^}]*}")
-
-        # Callback query
-        if echo "$RESPONSE" | grep -q '"callback_query"'; then
-            CALLBACK_ID=$(echo "$RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
-            FROM_ID=$(echo "$RESPONSE" | grep -o '"from":{[^}]*}' | head -2 | tail -1 | grep -o '"id":[0-9]*' | grep -o '[0-9]*')
-            CHAT_ID=$(echo "$RESPONSE" | grep -o '"chat":{[^}]*}' | head -1 | grep -o '"id":[0-9]*' | grep -o '[0-9]*')
-            DATA=$(echo "$RESPONSE" | grep -o '"data":"[^"]*"' | head -1 | sed 's/"data":"//;s/"//')
-            process_callback "$CHAT_ID" "$FROM_ID" "$DATA" "$CALLBACK_ID"
+        # Определяем тип: callback_query или message
+        if echo "$RESP" | grep -q '"callback_query"'; then
+            CB_ID=$(echo "$RESP" | grep -o '"id":"[0-9]*"' | head -1 | grep -o '[0-9]*')
+            FROM_ID=$(echo "$RESP" | grep -o '"from":{"id":[0-9]*' | head -2 | tail -1 | grep -o '[0-9]*')
+            CHAT_ID=$(echo "$RESP" | grep -o '"chat":{"id":[0-9]*' | head -1 | grep -o '[0-9]*' | head -1)
+            DATA=$(echo "$RESP" | grep -o '"data":"[^"]*"' | head -1 | sed 's/"data":"//;s/"$//')
+            process_callback "$CHAT_ID" "$FROM_ID" "$DATA" "$CB_ID"
         else
-            # Обычное сообщение
-            FROM_ID=$(echo "$RESPONSE" | grep -o '"from":{[^}]*}' | head -1 | grep -o '"id":[0-9]*' | grep -o '[0-9]*')
-            CHAT_ID=$(echo "$RESPONSE" | grep -o '"chat":{[^}]*}' | head -1 | grep -o '"id":[0-9]*' | grep -o '[0-9]*')
-            TEXT=$(echo "$RESPONSE" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"//;s/"$//')
+            FROM_ID=$(echo "$RESP" | grep -o '"from":{"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+            CHAT_ID=$(echo "$RESP" | grep -o '"chat":{"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+            TEXT=$(echo "$RESP" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"//;s/"$//')
             [ -n "$TEXT" ] && process_message "$CHAT_ID" "$FROM_ID" "$TEXT"
         fi
     done
 
+    OFFSET=$(cat "$OFFSET_FILE" 2>/dev/null || echo "$OFFSET")
     sleep 1
 done
