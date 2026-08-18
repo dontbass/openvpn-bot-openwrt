@@ -164,6 +164,18 @@ handle_name() {
     fi
     ovpn=$(build_ovpn "$name")
     tg_send_doc "$chat_id" "$ovpn" "✅ $name.ovpn"
+    tg_send "$chat_id" "📱 *Как подключиться:*
+
+1️⃣ Установите OpenVPN клиент:
+• *Android* — [OpenVPN for Android](https://play.google.com/store/apps/details?id=de.blinkt.openvpn)
+• *iOS* — [OpenVPN Connect](https://apps.apple.com/app/openvpn-connect/id590379981)
+• *Windows* — [OpenVPN Connect](https://openvpn.net/client/client-connect-vpn-for-windows/)
+• *macOS* — [Tunnelblick](https://tunnelblick.net/downloads.html)
+• *Linux* — \`sudo apt install openvpn\`
+
+2️⃣ Откройте приложение → импортируйте файл \`$name.ovpn\`
+
+3️⃣ Нажмите *Подключить*"
     log "INFO created $name"
 }
 
